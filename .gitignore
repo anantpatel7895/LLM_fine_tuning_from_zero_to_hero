@@ -216,3 +216,39 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# LLM fine-tuning repo additions
+# ---------------------------------------------------------------------------
+# Datasets and run outputs are regenerated on the GPU box, and are far too large
+# for git. Their manifests and datasheets ARE tracked (see the negations below),
+# because those are what make a run's numbers attributable.
+data/*
+!data/.gitkeep
+!data/**/manifest.json
+!data/**/datasheet.md
+
+artifacts/*
+!artifacts/.gitkeep
+!artifacts/**/run_card.md
+!artifacts/**/config.yaml
+!artifacts/**/eval.json
+
+checkpoints/
+*.safetensors
+*.gguf
+*.pt
+*.bin
+
+# reference PDFs — read locally, never synced or committed
+books/*
+!books/.gitkeep
+
+# tracking
+wandb/
+runs/
+*.tfevents.*
+
+# HF cache, if it ever lands inside the repo by accident
+.cache/
+hf_home/

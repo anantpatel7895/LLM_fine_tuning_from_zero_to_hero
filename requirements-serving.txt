@@ -1,0 +1,35 @@
+# A10 box — SERVING environment. THIS MUST BE A SEPARATE VIRTUALENV.
+#
+#   pyenv virtualenv 3.12.10 SERVE_VENV
+#   pyenv activate SERVE_VENV
+#   pip install -r requirements-serving.txt
+#
+# Why separate: vllm 0.28.0 pins torch==2.13.0 exactly, while the training environment runs
+# torch 2.14.0. Installing vllm into FT_VENV silently downgrades torch and breaks a compiled
+# flash-attn. This is a real trap — a tutorial that says `pip install vllm` alongside your
+# training deps will quietly wreck the training environment.
+#
+# Versions verified against PyPI, September 2026.
+
+vllm==0.28.0                   # pulls torch==2.13.0 itself — do not pin torch here
+huggingface-hub==1.30.0
+
+# --- quantization for inference (Phase 16) ---
+# NOTE: this is a DIFFERENT problem from QLoRA-for-training. Conflating them is a common
+# beginner error. Inference quantization is post-training and optimizes for bandwidth.
+#
+# On Ampere / A10 specifically:
+#   AWQ   -> supported, Marlin kernels, best quality/speed for 4-bit.  RECOMMENDED
+#   GPTQ  -> supported, Marlin kernels, equally good, more checkpoints available
+#   bnb   -> loads, but MUCH slower than AWQ/GPTQ in vLLM. Fine for "does my adapter
+#            work?" checks; never for serving. The format you TRAIN in is not the format
+#            you SERVE in — that's the lesson.
+#   GGUF  -> experimental and slow in vLLM. GGUF's home is llama.cpp; use that instead
+#   FP8   -> weight-only (W8A16) via Marlin. A10 has NO FP8 tensor cores, so no real FP8
+#   FP8 KV cache -> NOT a usable Ampere path; it runs attention in FP8. Keep bf16 KV
+llmcompressor>=0.8             # the maintained AWQ/GPTQ quantization path
+
+# --- benchmarking the endpoint ---
+httpx>=0.28
+pandas>=2.2
+matplotlib>=3.9                # the throughput-vs-latency frontier plot

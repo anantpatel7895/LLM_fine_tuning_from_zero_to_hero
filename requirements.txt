@@ -1,0 +1,37 @@
+# Mac authoring environment — notes, configs, data inspection, tokenizer work.
+# NO CUDA packages here on purpose: torch+cu*, bitsandbytes, flash-attn, deepspeed and
+# vllm have no usable Mac wheels, and mixing them makes this file uninstallable locally.
+# Training deps live in requirements-gpu.txt; serving deps in requirements-serving.txt.
+#
+#   pyenv virtualenv 3.12.10 FT_VENV && pyenv activate FT_VENV
+#   pip install -r requirements.txt
+#
+# Versions verified against PyPI, September 2026. See docs/notes/api-2026.md before
+# copying code from any tutorial — transformers v5 and trl v1 both broke the old API.
+
+# --- core, CPU-only ---
+torch==2.14.0                  # CPU/MPS build on Mac; the box installs the cu128 build
+transformers==5.16.1           # v5 = major break. Read docs/notes/api-2026.md
+tokenizers>=0.22
+datasets==5.0.1                # v5 = major bump, needs pyarrow>=21
+huggingface-hub==1.30.0        # v1 switched from requests to httpx
+jinja2>=3.1                    # chat templates are Jinja programs — Phase 02
+safetensors>=0.6
+
+# --- config, validation, CLI ---
+pydantic>=2.9                  # config-as-code, and the dataset record schema (Phase 07)
+pyyaml>=6.0
+typer>=0.15
+
+# --- data work (Mac-side inspection and small-scale runs) ---
+datasketch==2.0.0              # MinHash-LSH primitive — Phase 07, NUMBERS.md section 10
+datatrove==0.10.0              # HF's dedup/filter/decontaminate pipeline — Phase 07
+pandas>=2.2
+pyarrow>=21.0
+matplotlib>=3.9                # forgetting curves, frontier plots, diversity-vs-temperature
+numpy>=1.26
+
+# --- dev ---
+pytest>=8.3                    # the template invariants (Phase 02) and mask tests (Phase 03)
+ruff>=0.8
+ipykernel>=6.29                # notebooks/ — exploration only, never imported by src/

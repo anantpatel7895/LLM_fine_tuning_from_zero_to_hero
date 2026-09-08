@@ -1,0 +1,80 @@
+# A10 box — TRAINING environment. Install torch from the cu128 index:
+#
+#   pyenv activate FT_VENV
+#   pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cu128
+#   pip install -r requirements-gpu.txt
+#
+# cu128 rather than cu130: flash-attn, bitsandbytes and the `kernels` Hub variants are all
+# best-populated for cu128, and it fully supports sm_86 (Ampere / A10).
+#
+# *** DO NOT install vllm into this environment. ***
+# vllm 0.28.0 pins torch==2.13.0 exactly and will silently downgrade torch, which breaks
+# a compiled flash-attn. Serving gets its own venv — see requirements-serving.txt.
+#
+# Versions verified against PyPI, September 2026.
+# Read docs/notes/api-2026.md before copying code from any tutorial: transformers v5 and
+# trl v1 both removed API that essentially every existing blog post still uses.
+
+# --- core training stack ---
+# torch==2.14.0                # installed separately from the cu128 index, see above
+transformers==5.16.1
+trl==1.12.0                    # v1 = major break. SFTConfig defaults differ from the old ones
+peft==0.20.0
+accelerate==1.14.0
+datasets==5.0.1
+huggingface-hub==1.30.0
+bitsandbytes==0.50.2           # NF4 quantization + 8-bit optimizers. SM60+, so A10 is fine
+safetensors>=0.6
+sentencepiece>=0.2             # Mistral/Gemma tokenizers
+
+# --- attention kernels ---
+# Preferred path: no compilation at all. Pass
+#   attn_implementation="kernels-community/flash-attn2"
+# and `kernels` fetches a prebuilt kernel from the Hub at runtime.
+kernels==0.16.1
+# Fallback if the Hub kernel has no sm_86 variant (VERIFY THIS IN PHASE 00):
+#   MAX_JOBS=4 pip install flash-attn==2.8.3.post1 --no-build-isolation
+#
+# And note: on Ampere, plain `sdpa` (the transformers default) is already a flash kernel.
+# FA2 buys roughly 10-20% over sdpa here, not the 3x the marketing implies.
+
+# --- multi-GPU (Phase 10) ---
+deepspeed==0.19.6              # needed ONLY for ZeRO-3 + CPU *optimizer-only* offload.
+                               # FSDP2 (built into torch) is the default for 1.7B-4B full FT.
+                               # See docs/notes/api-2026.md for why.
+
+# --- throughput ---
+liger-kernel==0.8.2            # fused CE and other fused ops. NOTE: incompatible with
+                               # SFTConfig's default loss_type="chunked_nll" (Liger forces "nll")
+
+# --- tracking ---
+tensorboard>=2.18              # Phases 00-05
+# wandb>=0.19                   # uncomment at Phase 06, when 8-run ablation grids need it
+# trackio==0.37.0               # HF's self-hostable W&B alternative, if you'd rather not
+                               # send run data off the box
+
+# --- evaluation (Phase 05) ---
+lm-eval==0.4.13                # public benchmarks. Use the vLLM backend, 10x+ faster
+inspect-ai==0.3.263            # custom + LLM-as-judge evals. Solvers/scorers abstraction
+math-verify==0.9.0             # deterministic grading of reasoning outputs (Phase 15)
+
+# --- data (Phases 07-09) ---
+datatrove==0.10.0              # dedup, quality filtering, decontamination
+datasketch==2.0.0              # MinHash-LSH primitive, for deriving (b, r) yourself
+semhash==0.4.1                 # semantic/embedding dedup — catches paraphrases MinHash can't
+# NOTE: distilabel and argilla are deliberately absent. Both are effectively unmaintained
+# (no real code commits since early 2025; the authors have publicly moved on). Phase 08
+# rolls its own generation on a local vLLM server instead — about 100 lines, no
+# abandonment risk. See docs/notes/api-2026.md.
+
+# --- config, validation, plotting ---
+pydantic>=2.9
+pyyaml>=6.0
+typer>=0.15
+pandas>=2.2
+matplotlib>=3.9
+
+# --- dev ---
+pytest>=8.3
+ruff>=0.8
+py-spy>=0.4                    # `py-spy dump --pid N` on a hung run — Phase 12
