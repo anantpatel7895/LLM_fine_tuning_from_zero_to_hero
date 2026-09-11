@@ -42,6 +42,15 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     exit 1
 fi
 
+# --- make the package importable --------------------------------------------------------
+# src/ layout with no pyproject.toml, so nothing is pip-installed. Without this,
+# `python -m llm_finetuning_from_zero_to_hero...` fails with ModuleNotFoundError.
+# Derived from this file's own location rather than $PWD, so it is correct regardless of
+# which directory you source it from.
+FT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export FT_REPO
+export PYTHONPATH="$FT_REPO/src${PYTHONPATH:+:$PYTHONPATH}"
+
 # --- where the big things go ------------------------------------------------------------
 FT_DATA_DISK="${FT_DATA_DISK:-$HOME/slm-models}"
 
@@ -84,6 +93,8 @@ export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # --- report -----------------------------------------------------------------------------
+echo "box_env: repo            $FT_REPO"
+echo "box_env: PYTHONPATH      $PYTHONPATH"
 echo "box_env: data disk       $FT_DATA_DISK"
 echo "box_env: HF_HOME         $HF_HOME"
 echo "box_env: PIP_CACHE_DIR   $PIP_CACHE_DIR"
