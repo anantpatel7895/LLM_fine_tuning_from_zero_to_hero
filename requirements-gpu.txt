@@ -1,11 +1,29 @@
-# A10 box — TRAINING environment. Install torch from the cu128 index:
+# A10 box — TRAINING environment. Install torch from the cu128 index FIRST:
 #
 #   pyenv activate FT_VENV
-#   pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cu128
-#   pip install -r requirements-gpu.txt
+#   python -V && python -m pip -V      # these MUST agree — see docs/LESSONS.md L1
+#   python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+#   python -m pip install -r requirements-gpu.txt
 #
-# cu128 rather than cu130: flash-attn, bitsandbytes and the `kernels` Hub variants are all
-# best-populated for cu128, and it fully supports sm_86 (Ampere / A10).
+# Always `python -m pip`, never bare `pip`. A stray ~/.local/bin/pip for another Python
+# silently installed 6 GB into the wrong interpreter on this box. LESSONS.md L1.
+#
+# --- Why torch 2.11.0 and not something newer -------------------------------------------
+# VERIFIED on the box 2026-09-11: the cu128 index tops out at 2.11.0. Available there:
+#   2.7.0  2.7.1  2.8.0  2.9.0  2.9.1  2.10.0  2.11.0   (all +cu128)
+# torch 2.12+ ships CUDA 13 wheels only (nvidia-*-cu13, cuda-toolkit 13.x). Driver
+# 580.178.04 on this box would *support* CUDA 13 (needs >=580.65), so that path is not
+# blocked by the driver.
+#
+# We still choose cu128 deliberately:
+#   - bitsandbytes is the hard dependency. QLoRA (Phase 04) is dead without it, and its
+#     prebuilt wheels are best-populated for CUDA 12.x.
+#   - the `kernels` Hub flash-attn2 variants and flash-attn's own wheels are likewise
+#     mostly cu12x. On CUDA 13 you risk a 30-minute source compile, or no sm_86 variant.
+#   - CUDA 12.8 fully supports sm_86 (Ampere). Nothing in this curriculum needs a CUDA 13
+#     feature; there is no FP8 on this hardware to chase (see docs/HARDWARE.md §2).
+# Trading a newer CUDA for a working bitsandbytes is the right trade here. Revisit only if
+# a later phase needs something CUDA 13 exclusive.
 #
 # *** DO NOT install vllm into this environment. ***
 # vllm 0.28.0 pins torch==2.13.0 exactly and will silently downgrade torch, which breaks
@@ -16,8 +34,12 @@
 # trl v1 both removed API that essentially every existing blog post still uses.
 
 # --- core training stack ---
-# torch==2.14.0                # installed separately from the cu128 index, see above
-transformers==5.16.1
+# torch==2.11.0                # installed separately from the cu128 index, see above.
+                               # Do NOT list it here: pip would pull the CUDA 13 build
+                               # from PyPI and silently replace the cu128 one.
+transformers==5.16.1           # NOTE: pins below were verified against torch 2.14/CUDA 13.
+                               # On torch 2.11 some may need adjusting — pip will say so at
+                               # install time. Record any change here with the reason.
 trl==1.12.0                    # v1 = major break. SFTConfig defaults differ from the old ones
 peft==0.20.0
 accelerate==1.14.0

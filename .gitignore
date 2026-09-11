@@ -252,3 +252,37 @@ runs/
 # HF cache, if it ever lands inside the repo by accident
 .cache/
 hf_home/
+
+# ---------------------------------------------------------------------------
+# Secrets — private keys and tokens must never enter git history
+# ---------------------------------------------------------------------------
+# Added 2026-09-11 after an OCI API private key (oci_api_key.pem) appeared
+# untracked in the working tree. It was never committed, but the stock GitHub
+# Python .gitignore has no *.pem rule, so one `git add -A` would have staged it.
+#
+# Why this matters more than it looks: git history is effectively permanent.
+# Removing a committed key needs a history rewrite AND the key must still be
+# rotated, because anyone who cloned or any CI that fetched it already has a copy.
+# The only cheap moment is before the first commit — which is now.
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+id_rsa*
+id_ed25519*
+*.ppk
+
+# cloud / provider credentials
+.oci/
+oci_api_key*
+.aws/credentials
+*service-account*.json
+gcp-*.json
+*credentials.json
+
+# tokens
+.hf_token
+.huggingface/
+*token*.txt
+!requirements*.txt

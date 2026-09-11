@@ -21,16 +21,49 @@ Becoming expert at LLM fine-tuning **and** data preparation, on 2× NVIDIA A10.
 
 ### Environment
 
-```bash
-# --- Mac (authoring only: notes, configs, data inspection) ---
-pyenv virtualenv 3.12.10 FT_VENV
-pyenv activate FT_VENV
-pip install -r requirements.txt
+> ⚠️ **Three requirements files. Using the wrong one is the most likely setup mistake.**
+> They are not interchangeable, and installing the Mac file on the box leaves you with
+> **no training libraries at all** (`peft`, `trl`, `accelerate`, `bitsandbytes` are
+> GPU-only). Pick by machine:
 
-# --- A10 box (training) ---
-pyenv activate FT_VENV
-pip install -r requirements-gpu.txt
+> 🔴 **Always `python -m pip`, never bare `pip`.** On this box a stray
+> `~/.local/bin/pip` for Python 3.10 shadowed the venv's pip and silently installed 6 GB
+> into the wrong interpreter, twice. `python -m pip` cannot do that. Full explanation:
+> [docs/LESSONS.md](docs/LESSONS.md) **L1**. Sanity check before installing — these two
+> must agree:
+>
+> ```bash
+> python -V && python -m pip -V
+> ```
+
+**On the Mac** — authoring only: notes, configs, tokenizers, templates, `pytest`.
+
+```bash
+pyenv virtualenv 3.12.10 FT_VENV && pyenv activate FT_VENV
+python -m pip install -r requirements.txt        # <-- Mac ONLY. No CUDA, no trainers.
 ```
+
+**On the A10 box** — training. Note torch comes from the CUDA index *first*, separately:
+
+```bash
+pyenv virtualenv 3.12.10 FT_VENV && pyenv activate FT_VENV
+python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+python -m pip install -r requirements-gpu.txt    # <-- box ONLY
+```
+
+**Serving (Phase 16)** — a *separate* venv on the box. vLLM pins an exact older torch and
+will silently downgrade your training environment if installed alongside it:
+
+```bash
+pyenv virtualenv 3.12.10 FT_SERVE && pyenv activate FT_SERVE
+python -m pip install -r requirements-serving.txt
+```
+
+| File | Machine | Contains |
+|---|---|---|
+| `requirements.txt` | Mac | docs, configs, tokenizers, pytest. **No CUDA, no trainers** |
+| `requirements-gpu.txt` | box (`FT_VENV`) | `peft`, `trl`, `accelerate`, `bitsandbytes`, flash-attn |
+| `requirements-serving.txt` | box (`FT_SERVE`) | vLLM + quantization. **Never in `FT_VENV`** |
 
 ### Sync Mac → box
 

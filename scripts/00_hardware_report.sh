@@ -47,11 +47,34 @@ import importlib.metadata as md
 import sys
 
 print(f"python                      {sys.version.split()[0]}")
+print(f"python executable           {sys.executable}")
+
+# "not installed" and "installed but broken" need completely different fixes, so never
+# collapse them into one message. A missing package means `pip install`; a failing import
+# usually means a corrupt install, a truncated download (often from a full disk), or a
+# CUDA library mismatch -- and pip will happily report "Successfully installed" for a
+# package that cannot actually be imported.
+try:
+    dist_version = md.version("torch")
+except md.PackageNotFoundError:
+    dist_version = None
+
+if dist_version is None:
+    print("torch                       NOT INSTALLED (no distribution metadata)")
+    print("                            -> pip install torch==2.14.0 --index-url ...cu128")
+    raise SystemExit(0)
 
 try:
     import torch
-except ImportError:
-    print("torch                       NOT INSTALLED")
+except Exception as exc:                      # not just ImportError -- CUDA libs raise OSError
+    print(f"torch                       INSTALLED ({dist_version}) but IMPORT FAILED")
+    print(f"                            {type(exc).__name__}: {exc}")
+    print()
+    print("The package is present but unusable. Most likely causes, in order:")
+    print("  1. a truncated/corrupt install -- often a disk that filled mid-download")
+    print("  2. mismatched nvidia-* CUDA wheels (e.g. cu13 libs against a cu12 torch)")
+    print("  3. a conflicting torch pin dragged in by another package (torchvision, unsloth)")
+    print("Check `df -h /` first, then reinstall torch alone and import it before anything else.")
     raise SystemExit(0)
 
 print(f"torch                       {torch.__version__}")

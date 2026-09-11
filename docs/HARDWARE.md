@@ -15,16 +15,80 @@ python -m llm_finetuning_from_zero_to_hero.00_gpu_benchmark
 
 | Property | Expected | **MEASURED** |
 |---|---|---|
-| GPU model | NVIDIA A10 × 2 | |
-| VRAM per card | 24 GB (GDDR6) | |
-| Compute capability | 8.6 (Ampere, GA102) | |
-| Driver version | — | |
-| CUDA runtime (torch) | — | |
-| Interconnect | PCIe, **no NVLink** | |
-| TDP per card | 150 W | |
-| CPU / cores | — | |
-| System RAM | — | |
-| Disk free (for `HF_HOME` + checkpoints) | ≥ 500 GB recommended | |
+| GPU model | NVIDIA A10 × 2 | ✅ **NVIDIA A10 × 2** |
+| VRAM per card | 24 GB (GDDR6) | **23028 MiB = 22.49 GiB usable** — see note below |
+| Compute capability | 8.6 (Ampere, GA102) | ✅ **8.6** |
+| Driver version | — | **580.178.04** |
+| CUDA runtime (torch) | — | ⚠️ torch not importable yet — see §0 |
+| Interconnect | PCIe, **no NVLink** | ✅ **`PHB`** — traverses the PCIe host bridge (the CPU). Both cards on NUMA node 0, affinity 0-59 |
+| TDP per card | 150 W | ✅ **150.00 W**, max SM clock 1695 MHz |
+
+**On "24 GB":** `nvidia-smi` reports **23028 MiB**, not 24576. The card is marketed as 24 GB but ~1.5 GiB is reserved for ECC and firmware before you allocate anything. Then the CUDA context costs another ~300–600 MiB per process. So your real working budget is **≈21.9 GiB per card**, which is what `NUMBERS.md` §1 means by "24 GB is never 24 GB." Budget against 21.9, not 24.
+
+**On `PHB` specifically:** this is the *second-best* of the non-NVLink options. `PIX` (single bridge) would be faster; `SYS` (crossing NUMA nodes) would be slower. Both cards sharing NUMA node 0 means all-reduce traffic does not cross the inter-socket link — one fewer penalty on a box that already has no NVLink.
+| CPU / cores | — | **Intel Xeon Platinum 8358 @ 2.60 GHz, 60 cores** |
+| System RAM | — | **472 GiB** (417 GiB free at idle) |
+| Disk free (for `HF_HOME` + checkpoints) | ≥ 500 GB recommended | **Two disks** — see below |
+
+### Storage: two volumes, and `HF_HOME` must point at the second
+
+| Mount | Device | Size | Used | Free | Use for |
+|---|---|---|---|---|---|
+| `/` | `/dev/sda1` | 98 G | 93 G | **5.0 G (95%)** | ⚠️ Nearly full. Do **not** put models or checkpoints here |
+| `~/slm-models` | `/dev/sdb` | 197 G | 149 G | **40 G (80%)** | ✅ This is the data disk. `HF_HOME` belongs here |
+
+`HF_HOME` is currently **unset**, which means downloads default to `~/.cache/huggingface` on the 5 GB root partition. That must be changed before any model is fetched.
+
+**What is on the data disk** (`~/slm-models/base_models/`):
+
+| Model | Size | Relevant to this curriculum? |
+|---|---|---|
+| `gemma-4-26B-A4B-it-qat-q4_0-unquantized` | 49 G | ❌ Another project's serving artifact |
+| `gemma-4-26B-A4B-it-W8A16-compressed` | 29 G | ❌ ditto |
+| `gemma_4_26b_a4b_awq` | 17 G | ❌ ditto |
+| `gemma-4-26B-A4B-it-W4A16-compressed` | 17 G | ❌ ditto |
+| `llama_3_1_8b_instruct` | 15 G | ✅ **The headline model — already here** |
+| `Mistral-7B-Instruct-v0.3` | 14 G | ✅ **The contrast model — already here** |
+
+The four gemma-4-26B quantization variants total **112 GB**. Reclaiming them would triple the free space. They are inference-serving artifacts (W8A16/W4A16/AWQ/QAT are quantization formats, not training formats) belonging to separate work — confirm ownership before touching.
+
+**The win:** Llama-3.1-8B-Instruct and Mistral-7B-v0.3 are already downloaded, so Phases 02–04 need no large download at all.
+
+### GPU contention — the box is NOT idle
+
+Measured 2026-09-11, `nvidia-smi --query-compute-apps`:
+
+| PID | Process | VRAM |
+|---|---|---|
+| 52415 | `VLLM::EngineCore` | 18660 MiB |
+| 7139 | `.pyenv/versions/aml_sml_env/bin/python3` | 10082 MiB |
+
+**~28.7 GiB of the 45 GiB total is already allocated to other work.** A vLLM server is serving something (almost certainly one of the gemma variants above) and a second Python job is running.
+
+This contradicts the planning assumption that the box is dedicated and free. Until resolved it changes what is possible: roughly 4.4 GiB free on one card and 12.9 GiB on the other. QLoRA on an 8B needs ~6–8 GiB with headroom, so it fits on **one** card at best — and Phase 10's two-GPU work is impossible while both are occupied.
+
+*Measured 2026-09-11 on host `genai-experiment`. GPU rows still blank — the driver is broken, see §0.*
+
+### What the CPU and RAM figures buy us
+
+Both are better than this curriculum assumes, and two later phases get easier as a result:
+
+- **472 GiB RAM** makes DeepSpeed ZeRO-3 **CPU optimizer offload** genuinely viable in Phase 11. An 8B full fine-tune needs ~96 GB of fp32 AdamW optimizer state; that fits in host RAM with enormous room to spare. The constraint becomes PCIe transfer time, not capacity.
+- **60 cores** means `dataloader_num_workers` will never bottleneck training, and Phase 07's MinHash-LSH deduplication over a large corpus — normally the slowest data step — parallelizes well.
+
+---
+
+## 0. Blockers found on first run (2026-09-11)
+
+Recorded here because Phase 00 is not complete until all three clear. Diagnosis: `./scripts/00b_diagnose_blockers.sh`.
+
+| # | Blocker | Evidence | Impact |
+|---|---|---|---|
+| 1 | **NVIDIA driver/library version mismatch** | `Failed to initialize NVML: Driver/library version mismatch. NVML library version: 580.178` | **Total.** No GPU is usable. `nvidia-smi`, torch CUDA, everything |
+| 2 | **Root filesystem 92% full** | `/dev/sda1  98G  90G  7.9G  92% /`, and `HF_HOME` unset so models default to `~/.cache/huggingface` on `/` | **Severe.** Llama-3.1-8B in bf16 is ~16 GB — it cannot even download. The curriculum needs roughly 300–500 GB for models, datasets and checkpoints |
+| 3 | `pyenv FT_VENV` not created | `pyenv: version 'FT_VENV' is not installed` | Expected — not yet done on the box |
+
+**Do not treat #2 as secondary to #1.** Fixing the driver first only gets you to the point where the first model download fails.
 
 **Why TDP matters here.** The A10 is a 150 W single-slot datacenter card, not a 350 W A100. It throttles under sustained load, so a long training run's steady-state clock is meaningfully below its boost clock. Record clocks *during* a run, not at idle.
 
