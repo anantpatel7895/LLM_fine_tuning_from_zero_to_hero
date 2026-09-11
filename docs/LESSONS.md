@@ -73,11 +73,29 @@ It is **silent, and it mimics the opposite problem.** pip prints success. The pr
 
 ---
 
+**L2 — A script that sets environment variables must be sourced, not executed. Executing it half-works, which is worse than failing.**
+
+*Origin:* Phase 00, 2026-09-11, immediately after L1. `scripts/box_env.sh` was written to move `HF_HOME`, `PIP_CACHE_DIR` and `TMPDIR` off the nearly-full root disk. It was run as `./scripts/box_env.sh` instead of `source ./scripts/box_env.sh`. It printed a completely successful report — correct paths, correct free-space figures, even a passing interpreter check — and set **nothing** in the calling shell.
+
+*Why:* **Environment variables propagate down the process tree, never up.** A child process receives a *copy* of its parent's environment; there is no mechanism for it to write back. So `export` inside an executed script mutates an environment that is discarded microseconds later when the child exits. `source` (or `.`) avoids the fork entirely — it reads the file and runs each line in the *current* shell.
+
+*Why it is dangerous rather than obvious:* the failure is **partial**. Side effects that touch the outside world persist — the `mkdir -p` calls created real directories, and every `echo` printed the values the script *intended* to set. So the output is indistinguishable from success. Only the part that mattered was lost. Had the script merely crashed, it would have been fixed in ten seconds.
+
+*How to apply:*
+
+- **If a script's purpose is to change your shell — env vars, `PATH`, activating something — it must be sourced.** Executing it can only ever produce side effects, never state.
+- **Guard the script against the mistake**, since a comment saying "source me" does not stop muscle memory. `box_env.sh` now checks `[ "${BASH_SOURCE[0]}" = "$0" ]` and exits with instructions. Cheap, and it converts a silent half-success into a loud, self-explaining failure — which is the whole point.
+- **Verify the state, not the output.** After sourcing, check `echo $HF_HOME`. A script's own report only proves what it tried to do; the shell's environment proves what happened. The same discipline as "inspect the tensors, not the loss curve" (PLAN.md rule 5) — check the thing itself, not the narration.
+- The mirror-image error is worth knowing too: **sourcing something that expects to be executed** leaks its variables and functions into your shell, and any `exit` in it closes your terminal.
+
+---
+
 ## Origin index
 
 | Lesson | Phase | Incident |
 |---|---|---|
 | L1 | 00 (2026-09-11) | `pip` resolved to a Python 3.10 user install while `python` was the 3.12.10 venv; torch "installed successfully" twice and was unimportable both times |
+| L2 | 00 (2026-09-11) | `box_env.sh` was executed rather than sourced; it printed a fully successful report and set nothing in the calling shell |
 
 ---
 

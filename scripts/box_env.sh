@@ -18,6 +18,30 @@
 # space, fail partway, and leave a corrupt cache behind. These variables redirect the
 # large writes onto the data disk BEFORE that can happen.
 
+# --- refuse to run as a subprocess ------------------------------------------------------
+# If this file is EXECUTED (./scripts/box_env.sh) rather than SOURCED, every `export`
+# below applies to a child shell that exits one millisecond later. The mkdir calls take
+# effect, so it looks like it worked -- but the calling shell gets nothing. That silent
+# half-success is exactly why this guard exists.
+#
+# Environment variables travel DOWN the process tree, never UP: a child receives a *copy*
+# of its parent's environment and cannot write back into it. `source` sidesteps this by
+# running the commands in the current shell rather than forking one.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    echo "ERROR: this file must be SOURCED, not executed." >&2
+    echo >&2
+    echo "  You ran:   ./scripts/box_env.sh" >&2
+    echo "  Run this:  source ./scripts/box_env.sh" >&2
+    echo >&2
+    echo "Executing it forks a child shell, exports into that child, and then the child" >&2
+    echo "exits -- taking every variable with it. Your shell would be left unchanged," >&2
+    echo "HF_HOME would stay unset, and the next model download would target the" >&2
+    echo "nearly-full root disk." >&2
+    echo >&2
+    echo "Verify after sourcing:  echo \$HF_HOME" >&2
+    exit 1
+fi
+
 # --- where the big things go ------------------------------------------------------------
 FT_DATA_DISK="${FT_DATA_DISK:-$HOME/slm-models}"
 
