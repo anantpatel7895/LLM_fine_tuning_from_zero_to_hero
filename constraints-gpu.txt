@@ -1,0 +1,40 @@
+# Constraints for the A10 box. Use with EVERY install into FT_VENV:
+#
+#   python -m pip install -c constraints-gpu.txt -r requirements-gpu.txt
+#
+# WHAT A CONSTRAINTS FILE IS
+# --------------------------
+# A requirements file says "install these". A constraints file says "IF you install this,
+# it must be this version" -- it never causes an install by itself. So it acts as a
+# guard rail on pip's dependency resolver rather than a shopping list.
+#
+# WHY THIS ONE EXISTS
+# -------------------
+# torch 2.11.0+cu128 was installed deliberately from the PyTorch CUDA 12.8 index, because
+# bitsandbytes (and therefore all of QLoRA, Phase 04) needs cu12x wheels. See
+# requirements-gpu.txt for the full reasoning.
+#
+# That pin is fragile. Several packages below depend on torch -- deepspeed, liger-kernel,
+# lm-eval, semhash via sentence-transformers -- and if any of them requests a torch
+# version that 2.11.0 does not satisfy, pip will "helpfully" fetch a replacement from the
+# DEFAULT PyPI index. PyPI serves the CUDA 13 build. You would then silently have:
+#
+#   - a 3 GB re-download you did not ask for
+#   - torch built against CUDA 13 while your nvidia-*-cu12 libraries remain
+#   - bitsandbytes unable to find a matching runtime, i.e. no QLoRA
+#
+# and the symptom would appear three phases later as an obscure CUDA error.
+#
+# This file makes that impossible: pip fails loudly with a resolution error instead of
+# quietly swapping torch. A loud failure you can read beats a silent substitution you
+# cannot -- the same principle as LESSONS.md L1 and L2.
+torch==2.11.0+cu128
+
+# Keep the CUDA runtime family on 12.x for the same reason. Mixing a cu13 library into a
+# cu12 torch is the exact failure mode above, one layer down.
+nvidia-cublas-cu12==12.8.4.1
+nvidia-cudnn-cu12==9.19.0.56
+nvidia-nccl-cu12==2.28.9
+
+# triton ships paired with torch; letting it drift breaks torch.compile (Phase 10).
+triton==3.6.0

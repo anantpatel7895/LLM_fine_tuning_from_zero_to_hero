@@ -67,7 +67,9 @@ python -m pip install -r requirements.txt      # Mac
 # cu128 tops out at torch 2.11.0; 2.12+ is CUDA-13-only and bitsandbytes/flash-attn
 # wheels are best-populated for cu12x, so 2.11.0 is the deliberate pin.
 python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
-python -m pip install -r requirements-gpu.txt
+# -c is mandatory: without it pip silently swaps the cu128 torch for the CUDA 13 build
+# from PyPI, breaking bitsandbytes and all of Phase 04.
+python -m pip install -c constraints-gpu.txt -r requirements-gpu.txt
 
 # --- tests (Mac, no GPU) ---
 pytest tests/ -v

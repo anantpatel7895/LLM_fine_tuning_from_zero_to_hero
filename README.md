@@ -47,8 +47,9 @@ python -m pip install -r requirements.txt        # <-- Mac ONLY. No CUDA, no tra
 
 ```bash
 pyenv virtualenv 3.12.10 FT_VENV && pyenv activate FT_VENV
+source ./scripts/box_env.sh                      # HF_HOME etc. onto the data disk. SOURCE it
 python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
-python -m pip install -r requirements-gpu.txt    # <-- box ONLY
+python -m pip install -c constraints-gpu.txt -r requirements-gpu.txt   # <-- box ONLY
 ```
 
 **Serving (Phase 16)** — a *separate* venv on the box. vLLM pins an exact older torch and

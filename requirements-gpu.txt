@@ -3,7 +3,11 @@
 #   pyenv activate FT_VENV
 #   python -V && python -m pip -V      # these MUST agree — see docs/LESSONS.md L1
 #   python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
-#   python -m pip install -r requirements-gpu.txt
+#   python -m pip install -c constraints-gpu.txt -r requirements-gpu.txt
+#
+# The `-c constraints-gpu.txt` is not optional. Several packages here depend on torch, and
+# without the constraint pip will silently replace your cu128 build with the CUDA 13 one
+# from PyPI -- which breaks bitsandbytes and therefore all of Phase 04. Read that file.
 #
 # Always `python -m pip`, never bare `pip`. A stray ~/.local/bin/pip for another Python
 # silently installed 6 GB into the wrong interpreter on this box. LESSONS.md L1.
@@ -88,6 +92,11 @@ semhash==0.4.1                 # semantic/embedding dedup — catches paraphrase
 # (no real code commits since early 2025; the authors have publicly moved on). Phase 08
 # rolls its own generation on a local vLLM server instead — about 100 lines, no
 # abandonment risk. See docs/notes/api-2026.md.
+
+# --- numerics ---
+numpy>=1.26,<3                 # torch warns "Failed to initialize NumPy" without it. Not
+                               # fatal, but .numpy() and some dataloader paths need it.
+                               # Was previously arriving only transitively via pandas.
 
 # --- config, validation, plotting ---
 pydantic>=2.9
