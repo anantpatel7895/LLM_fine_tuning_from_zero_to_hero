@@ -102,7 +102,7 @@ This table is the reason most fine-tuning tutorials are subtly wrong for your bo
 |---|:---:|---|
 | **bf16** | ✅ | Use it. No loss scaling needed, unlike fp16 |
 | **fp16** | ✅ | Works, but needs loss scaling — prefer bf16 |
-| **TF32** | ✅ | On by default for matmul in recent torch; ~free speedup |
+| **TF32** | ✅ hardware, ❌ **off by default** | **MEASURED 2026-09-11: `TF32 matmul enabled → no`.** My earlier claim that recent torch enables it was wrong — torch has defaulted `torch.backends.cuda.matmul.allow_tf32 = False` since 1.12, for numerical-reproducibility reasons. Enable explicitly if you want it. **But it barely matters here:** TF32 only accelerates **fp32** matmuls, and this curriculum trains in bf16 throughout. It would affect only the stray fp32 ops (optimizer math, norms). Not a missed speedup worth chasing — just do not believe a tutorial that says it is automatic |
 | **FP8** | ❌ | No FP8 tensor cores. Needs SM 8.9 (Ada) / 9.0 (Hopper). Rules out FP8 training, and `--kv-cache-dtype fp8` in vLLM is **not a usable Ampere path** — it runs attention in FP8. Keep the bf16 KV cache; save KV memory via GQA and `--max-model-len` instead |
 | **`sdpa`** | ✅ **default, and a good one** | PyTorch's own flash kernel. Does not materialize the `s × s` matrix, so the activation formula in `NUMBERS.md` §2 holds |
 | **FlashAttention-2** | ✅ | Supported on Ampere. Buys roughly **10–20% over `sdpa`** here — not the 3× the marketing implies. Get it via `attn_implementation="kernels-community/flash-attn2"`, which downloads a prebuilt kernel and skips the 30-minute compile |
@@ -121,33 +121,78 @@ This table is the reason most fine-tuning tutorials are subtly wrong for your bo
 
 These become your "is the box healthy?" regression baseline. Re-run them if a training run is inexplicably slow.
 
+**Measured 2026-09-11**, GPUs idle, `torch 2.11.0+cu128`, driver 580.178.04.
+
 ### 3a. Achieved matmul throughput
 
-| Shape (bf16) | Theoretical peak | **MEASURED TFLOPS** | % of peak |
-|---|---|---|---|
-| 4096 × 4096 × 4096 | 125 TFLOPS | | |
-| 8192 × 8192 × 8192 | 125 TFLOPS | | |
-| 2048 × 2048 × 2048 | 125 TFLOPS | | |
+| Shape (bf16) | Theoretical peak | **MEASURED TFLOPS** | % of peak | Time |
+|---|---|---|---|---|
+| 2048 × 2048 × 2048 | 125 TFLOPS | **85.54** | 68.4% | 0.201 ms |
+| 4096 × 4096 × 4096 | 125 TFLOPS | **85.98** | 68.8% | 1.599 ms |
+| 8192 × 8192 × 8192 | 125 TFLOPS | **79.70** | 63.8% | 13.795 ms |
 
-Expect small shapes to fall well short of peak — that gap *is* the reason micro-batch size affects MFU.
+**~86 TFLOPS sustained, 69% of spec.** That is a good result for a 150 W card, and it is the number to use in throughput predictions — not 125.
+
+Note the shape trend is the *opposite* of the usual expectation: 8192³ is **slower** than 4096³ (63.8% vs 68.8%), not faster. At 8192³ the working set no longer fits in L2, so the kernel becomes bandwidth-starved; the largest shape is not the most efficient one. That is a real effect on this card and it matters when picking micro-batch and sequence length in Phase 04.
+
+⚠️ **Idle-clock caveat:** these were measured on a cold, idle card at 28 °C. A 150 W A10 throttles under a sustained 3-hour run. Verify with `nvidia-smi dmon` **during** training, not before it, and expect the real figure to be lower.
 
 ### 3b. Memory bandwidth
 
-| Test | Theoretical | **MEASURED** |
-|---|---|---|
-| Large device-to-device copy | 600 GB/s | |
+| Test | Theoretical | **MEASURED** | % of peak |
+|---|---|---|---|
+| 2 GiB device-to-device copy | 600 GB/s | **482.5 GB/s** | 80.4% |
+
+80% of spec is normal and healthy — achievable bandwidth is typically 75–85% of the marketing figure.
+
+**Measured ridge point = 86 TFLOPS ÷ 482.5 GB/s ≈ 178 FLOP/byte** (spec-vs-spec gives 208).
+
+The benchmark script printed **259**, which is wrong — it divided *spec* FLOPS by *measured* bandwidth, mixing the two. Use **178**: both terms must come from the same source or the ratio is meaningless. Either way the conclusion in `NUMBERS.md` §11 is untouched — training sits far to the right of it, decode far to the left.
+
+### 3b-2. Usable memory per card — measured, not assumed
+
+| Quantity | **MEASURED** |
+|---|---|
+| `nvidia-smi` total | 23028 MiB (22.49 GiB) |
+| torch nominal total | 22.06 GiB |
+| Free before any allocation | 21.79 GiB |
+| **Largest sum successfully allocated** | **21.75 GiB** (98.6% of nominal) |
+| SMs per card | 72 |
+
+**Budget 21.75 GiB per card.** Not 24, not 23. The gap from 22.49 → 21.79 GiB is **~277 MiB of CUDA context**, which is the real answer to `question_answer.md` Q00.3 consumer 2.
+
+⚠️ The script reports "CUDA context cost 2.0 MiB", which is **mismeasured** — it captures only the incremental allocation after the context already existed. The true cost is the nominal-minus-free gap above. Fix noted in the script.
+
+Expect a few hundred MiB less again once NCCL initialises for multi-GPU.
 
 ### 3c. All-reduce bandwidth over PCIe — **the number that decides Phase 10**
 
+**Measured 2026-09-11, `world_size=2` under `torchrun`, NCCL over `PHB`:**
+
 | Payload | **MEASURED effective GB/s** | Time |
 |---|---|---|
-| 4 MB | | |
-| 84 MB (= one r=16 LoRA adapter on 8B) | | |
-| 1 GB | | |
+| 4 MiB | **12.24 GB/s** | 0.343 ms |
+| 84 MiB (= one r=16 LoRA adapter on 8B) | **14.86 GB/s** | 5.929 ms |
+| 1 GiB | **15.16 GB/s** | 70.848 ms |
 
-Expect roughly **15–22 GB/s** effective, versus ~300 GB/s on an NVLinked pair. Small payloads will be latency-dominated and show much lower effective bandwidth — that is expected and it matters, because LoRA gradients *are* a small payload.
+**Verdict: ~15.2 GB/s asymptotic.** Prediction was 15–22 GB/s, so reality landed at the **bottom** of the predicted band — the prediction held, but only just. For reference an NVLinked pair does ~300 GB/s, so **this interconnect is ~20× slower** than what most multi-GPU tutorials silently assume.
 
-Once you have this number, plug it into [NUMBERS.md §6](../NUMBERS.md) and re-derive whether DDP or ZeRO-3 wins for each regime. **Do not skip that step** — it is the most transferable thing you will learn from this hardware.
+Note bandwidth *rising* with payload (12.24 → 14.86 → 15.16). Small transfers are latency-dominated, so they never reach asymptotic bandwidth. This matters directly: LoRA gradients are an 84 MiB payload, i.e. still slightly below the plateau.
+
+### What this decides — re-derived from the measured 15.2 GB/s
+
+| Regime | Gradient payload | Comms time/step | Verdict |
+|---|---|---|---|
+| **DDP + LoRA r=16 on 8B** | 84 MiB (42 M params × 2 B) | **~5.9 ms** (measured directly) | **Negligible** against a ~1 s step. DDP is unambiguously correct |
+| **DDP + full FT of 8B** | 16.1 GiB (8.03 B params × 2 B) | **~1.06 s** | **Dominates.** Plus ZeRO-3's parameter all-gathers on top |
+
+⚠️ **The script's derived lines say 168 MB → 11.1 ms and 32.1 GB → 2.12 s — exactly 2× the figures above.** It applied the textbook `2Ψ` all-reduce heuristic. For a **ring all-reduce the bus volume per rank is `2(N-1)/N × S`, which at `N=2` is exactly `S`, not `2S`** — so the `2×` is wrong for a two-GPU box. The measured 84 MiB row (5.929 ms) is ground truth and confirms it: no doubling.
+
+Trust the measured row. The `2Ψ` form is right for large `N` (it approaches `2S`), which is why the heuristic is everywhere — it just does not apply to a pair.
+
+**The conclusion is unchanged either way**, which is itself the useful part: 5.9 ms and 11.1 ms are both negligible against a 1-second step, and 1.06 s and 2.12 s both dominate it. The decision was robust to a 2× error in the derivation.
+
+> **→ Treat GPU 1 as a second *experiment slot*, not a second *worker*,** unless the arithmetic for a specific job says otherwise. Confirm in Phase 10.
 
 ### 3d. Baseline generation throughput
 

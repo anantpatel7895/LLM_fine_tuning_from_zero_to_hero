@@ -84,6 +84,7 @@ Sharded across 2 GPUs, and remembering that **48 GB is not a pool — it is 24 +
 | [question_answer.md](question_answer.md) | Running Q&A log — recall practice, the real retention mechanism |
 | [docs/decisions/](docs/decisions/) | Numbered ADRs: why this model, this framework, this eval suite |
 | [docs/setup/remote-gpu.md](docs/setup/remote-gpu.md) | The Mac → A10 box workflow: SSH, tmux, sync, environment install |
+| [docs/notes/benchmarking.md](docs/notes/benchmarking.md) | How to measure a system without fooling yourself — the four axes, the roofline model, five ways a benchmark lies. Deliberately general: applies to databases and services, not just GPUs |
 
 ---
 

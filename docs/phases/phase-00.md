@@ -2,7 +2,7 @@
 
 **~6 hrs** · Prerequisite: — · Next: [Phase 01](phase-01.md)
 
-> **Status:** 🟡 In Progress
+> **Status:** 🟡 In Progress — hardware measured and recorded (2026-09-11); `docs/HARDWARE.md` §1–3 complete. Remaining: write your own predictions into §2 below and close the Q&A.
 
 ## 0. Learning goal
 
@@ -191,6 +191,27 @@ _(paste the reports, then fill in the MEASURED columns in §2 above)_
 ### What surprised you
 
 _(the gap between prediction and measurement — this is the phase's actual lesson)_
+
+### Measured 2026-09-11 — predictions vs reality
+
+| Quantity | Predicted | **Measured** | Gap, and what it taught |
+|---|---|---|---|
+| All-reduce bandwidth | 15–22 GB/s | **15.2 GB/s** | Landed at the **bottom** of the band. The prediction held, but a band that wide is barely a prediction — tighten it next time |
+| Usable VRAM/card | ~21.9 GiB | **21.75 GiB** | Good. "24 GB" is off by 2.25 GiB |
+| CUDA context | 300–600 MiB | **~277 MiB** | Slightly better than predicted |
+| Matmul throughput | — (spec 125 TFLOPS) | **86 TFLOPS, 69% of spec** | Strong for 150 W. **Use 86, not 125, in every throughput estimate** |
+| Memory bandwidth | — (spec 600 GB/s) | **482.5 GB/s, 80%** | Normal; achievable is always 75–85% of spec |
+| Ridge point | 208 FLOP/byte (spec) | **178 FLOP/byte** (measured/measured) | Same conclusion — training right of it, decode far left |
+
+**Three things the measurements caught that the derivations got wrong** — the real value of rule 2:
+
+1. **The `2Ψ` all-reduce heuristic overstates a 2-GPU box by exactly 2×.** A ring all-reduce moves `2(N-1)/N × S` per rank, which is `S` at `N=2`, not `2S`. The measured 84 MiB row (5.929 ms) disproved the derived 11.1 ms directly. `2Ψ` is the large-`N` limit — it just does not apply to a pair.
+2. **The ridge point was computed from spec FLOPS ÷ measured bandwidth**, giving a meaningless 259. Both terms must come from one source.
+3. **The "CUDA context cost" probe measured allocator rounding, not the context** — CUDA was already initialised by the time it ran. The real figure is nominal-minus-free.
+
+All three are fixed in `00_gpu_benchmark.py`. Worth noticing that **the Phase 10 conclusion survived a 2× error** — 5.9 ms and 11.1 ms are both negligible against a 1 s step; 1.06 s and 2.12 s both dominate it. A decision robust to a 2× error in its input is a decision you can trust.
+
+**Unexpected finding:** matmul efficiency *falls* at the largest shape — 8192³ hits 63.8% where 4096³ hits 68.8%. The working set stops fitting in L2 and the kernel goes bandwidth-starved. Bigger is not automatically better, which is worth remembering when choosing micro-batch and sequence length in Phase 04.
 
 ### Questions
 

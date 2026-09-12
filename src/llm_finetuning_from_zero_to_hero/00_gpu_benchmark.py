@@ -93,7 +93,7 @@ def bench_matmul(device: int = 0) -> list[dict]:
 # --------------------------------------------------------------------------------------
 # 2. memory bandwidth
 # --------------------------------------------------------------------------------------
-def bench_bandwidth(device: int = 0) -> dict:
+def bench_bandwidth(device: int = 0, measured_tflops: float | None = None) -> dict:
     """HBM bandwidth via a large device-to-device copy.
 
     This sets the decode-side roofline: autoregressive generation is bandwidth-bound
@@ -113,8 +113,16 @@ def bench_bandwidth(device: int = 0) -> dict:
     pct = 100 * gbps / A10_PEAK_BANDWIDTH_GBPS
     print(f"  2 GiB d2d copy   {seconds * 1e3:8.3f} ms   {gbps:7.1f} GB/s   {pct:5.1f}% of peak")
     print(f"\n  spec-sheet peak: {A10_PEAK_BANDWIDTH_GBPS} GB/s")
-    print(f"  ridge point = {A10_PEAK_BF16_TFLOPS * 1e12 / (gbps * 1e9):.0f} FLOP/byte "
-          f"(measured)   vs {A10_PEAK_BF16_TFLOPS * 1e12 / (A10_PEAK_BANDWIDTH_GBPS * 1e9):.0f} (spec)")
+    # FIXED 2026-09-11: this previously divided the SPEC peak TFLOPS by the MEASURED
+    # bandwidth, which mixes two different sources and reported a meaningless 259.
+    # A ridge point is only interpretable if BOTH terms come from the same source.
+    spec_ridge = A10_PEAK_BF16_TFLOPS * 1e12 / (A10_PEAK_BANDWIDTH_GBPS * 1e9)
+    if measured_tflops:
+        measured_ridge = measured_tflops * 1e12 / (gbps * 1e9)
+        print(f"  ridge point = {measured_ridge:.0f} FLOP/byte (measured/measured)"
+              f"   vs {spec_ridge:.0f} (spec/spec)")
+    else:
+        print(f"  ridge point = {spec_ridge:.0f} FLOP/byte (spec/spec; matmul not run)")
     print("  Above the ridge point = compute-bound (training). Below = memory-bound (decode).")
 
     del src, dst
@@ -140,10 +148,16 @@ def bench_usable_memory(device: int = 0) -> dict:
     total = torch.cuda.get_device_properties(device).total_memory
     free_before, _ = torch.cuda.mem_get_info(device)
 
-    # Establish the context cost, then grow a single allocation until it fails.
+    # FIXED 2026-09-11: this used to allocate a 1-element probe and call the resulting
+    # delta the "CUDA context cost", reporting a nonsensical 2.0 MiB. The context is
+    # already created by the time we get here -- torch.cuda.set_device() above initialises
+    # it -- so the probe only measured allocator rounding on a 4-byte tensor.
+    #
+    # The context cost is the gap between what the card HAS and what is free before any
+    # user allocation. On this box that is ~277 MiB, matching question_answer.md Q00.3.
+    context_bytes = total - free_before
+
     _probe = torch.empty(1, device=f"cuda:{device}")
-    free_after_ctx, _ = torch.cuda.mem_get_info(device)
-    context_bytes = free_before - free_after_ctx
 
     allocated = []
     chunk = 256 * 1024**2  # 256 MiB
@@ -159,7 +173,8 @@ def bench_usable_memory(device: int = 0) -> dict:
 
     print(f"  nominal total          {total / 1024**3:7.2f} GiB")
     print(f"  free before any alloc  {free_before / 1024**3:7.2f} GiB")
-    print(f"  CUDA context cost      {context_bytes / 1024**2:7.1f} MiB")
+    print(f"  CUDA context + reserve {context_bytes / 1024**2:7.1f} MiB   "
+          f"(nominal minus free-before-alloc)")
     print(f"  largest sum allocated  {usable / 1024**3:7.2f} GiB   "
           f"({100 * usable / total:.1f}% of nominal)")
     print("\n  Budget the measured number in every VRAM prediction. NOT 24 GB.")
@@ -232,8 +247,20 @@ def bench_allreduce() -> list[dict]:
     if rank == 0 and results:
         # Re-derive NUMBERS.md section 6 from the measurement rather than the estimate.
         bw = max(r["bus_gbps"] for r in results) * 1e9
-        lora_bytes = 2 * 41.9e6 * 2       # 2 * Psi * bytes_per_param, r=16 on 8B
-        full_bytes = 2 * 8.03e9 * 2       # same, full fine-tune
+
+        # FIXED 2026-09-11: these used the textbook 2*Psi all-reduce heuristic, which
+        # OVERSTATES a two-GPU box by exactly 2x.
+        #
+        # A ring all-reduce moves 2*(N-1)/N * S bytes per rank (reduce-scatter, then
+        # all-gather). At N=2 that is 2*(1/2)*S = S -- the payload itself, no doubling.
+        # The 2*Psi form is the large-N limit, which is why it appears everywhere; it
+        # simply does not hold for a pair.
+        #
+        # The measurement proved it: the 84 MiB row took 5.9 ms, not the 11.1 ms the old
+        # formula claimed. Trust the measured row.
+        ring_factor = 2 * (world - 1) / world      # == 1.0 when world == 2
+        lora_bytes = ring_factor * 41.9e6 * 2      # r=16 on 8B, bf16 gradients
+        full_bytes = ring_factor * 8.03e9 * 2      # full fine-tune, bf16 gradients
         print(f"\n  --- NUMBERS.md section 6, re-derived from YOUR measured {bw / 1e9:.1f} GB/s ---")
         print(f"  DDP step comms, LoRA r=16 on 8B  (Psi=42M):  "
               f"{lora_bytes / 1e6:6.0f} MB  ->  {1e3 * lora_bytes / bw:7.1f} ms   "
@@ -281,7 +308,11 @@ def main() -> int:
     if args.only in ("matmul", "all"):
         results["matmul"] = bench_matmul(args.device)
     if args.only in ("bandwidth", "all"):
-        results["bandwidth"] = bench_bandwidth(args.device)
+        # Pass the best measured matmul figure so the ridge point is measured/measured
+        # rather than spec/measured. None when --only bandwidth skipped the matmul run.
+        _matmul = results.get("matmul")
+        best_tflops = max((r["tflops"] for r in _matmul), default=None) if _matmul else None
+        results["bandwidth"] = bench_bandwidth(args.device, measured_tflops=best_tflops)
     if args.only in ("memory", "all"):
         results["usable_memory"] = bench_usable_memory(args.device)
 
