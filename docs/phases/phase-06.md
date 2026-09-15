@@ -28,7 +28,7 @@ After this phase you can **predict which LoRA configuration will win before you 
 
 - Why ΔW is *approximately* low-rank, and the intrinsic-dimension argument behind LoRA
 - The alpha/rank scaling. `alpha = 2r` is a **convention, not a law**. **rsLoRA** uses α/√r and matters specifically at high rank
-- **Target modules.** Attention-only vs all-linear. From `NUMBERS.md` §5, the MLP holds **67%** of the LoRA-targetable parameters — which is the arithmetic behind the empirical finding that all-linear usually wins. Attention adapters move *style*; MLP adapters move *knowledge*
+- **Target modules.** Attention-only vs all-linear. From `NUMBERS.md` §5: the MLP holds **81% of the base model's** parameters and **67% of the LoRA adapter's** parameters (two different quantities — the section explains why). Either way the MLP dominates, which is the arithmetic behind the empirical finding that all-linear usually wins. Attention adapters move *style*; MLP adapters move *knowledge*
 - **DoRA** (magnitude/direction decomposition), **LoRA+** (higher LR on B than A), and the initialization schemes: PiSSA, OLoRA, LoftQ
 - **QLoRA's honest cost**: dequantization overhead makes it meaningfully *slower* than bf16 LoRA on Ampere while saving ~12 GB on an 8B. So on this box QLoRA is a **capacity** tool (14B+), not a speed tool. Derive this yourself from the measurements
 - **Merging**: `merge_and_unload()`. Why merging a QLoRA adapter into a bf16 base loses accuracy — the adapter was trained against *quantized* weights, so merging into dequantized weights leaves a residual error. And multi-adapter merging: linear, TIES, DARE

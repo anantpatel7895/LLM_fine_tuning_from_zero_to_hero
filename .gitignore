@@ -253,6 +253,11 @@ runs/
 .cache/
 hf_home/
 
+# editor state — per-machine, and you work across a Mac and the box
+.vscode/
+.idea/
+*.swp
+
 # ---------------------------------------------------------------------------
 # Secrets — private keys and tokens must never enter git history
 # ---------------------------------------------------------------------------

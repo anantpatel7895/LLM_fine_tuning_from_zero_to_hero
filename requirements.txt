@@ -4,7 +4,10 @@
 # Training deps live in requirements-gpu.txt; serving deps in requirements-serving.txt.
 #
 #   pyenv virtualenv 3.12.10 FT_VENV && pyenv activate FT_VENV
-#   pip install -r requirements.txt
+#   python -V && python -m pip -V      # these MUST agree — see docs/LESSONS.md L1
+#   python -m pip install -r requirements.txt
+#
+# Always `python -m pip`, never bare `pip`.
 #
 # Versions verified against PyPI, September 2026. See docs/notes/api-2026.md before
 # copying code from any tutorial — transformers v5 and trl v1 both broke the old API.
@@ -17,6 +20,14 @@ datasets==5.0.1                # v5 = major bump, needs pyarrow>=21
 huggingface-hub==1.30.0        # v1 switched from requests to httpx
 jinja2>=3.1                    # chat templates are Jinja programs — Phase 02
 safetensors>=0.6
+
+# --- fine-tuning libraries: pure Python, so they run on the Mac too ---
+# Phases 01-03 are Mac phases and genuinely need these. Omitting them made Phase 01's
+# central test (LoRA vs peft equivalence) silently SKIP rather than run.
+# None of these carry CUDA wheels; they sit on top of whatever torch is present.
+peft==0.20.0                   # Phase 01 — diff your hand-written LoRA against theirs
+trl==1.12.0                    # Phase 03 — completion_only_loss / assistant_only_loss
+accelerate==1.14.0             # pulled in by trl; harmless and CPU-capable on Mac
 
 # --- config, validation, CLI ---
 pydantic>=2.9                  # config-as-code, and the dataset record schema (Phase 07)
@@ -33,5 +44,5 @@ numpy>=1.26
 
 # --- dev ---
 pytest>=8.3                    # the template invariants (Phase 02) and mask tests (Phase 03)
-ruff>=0.8r
+ruff>=0.8
 ipykernel>=6.29                # notebooks/ — exploration only, never imported by src/

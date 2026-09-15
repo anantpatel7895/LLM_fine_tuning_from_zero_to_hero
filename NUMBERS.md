@@ -318,7 +318,18 @@ adapter size (bf16) = 41.9e6 × 2 B = 83.8 MB
 
 **Remember these numbers — r=16: 42 M / 0.52% / 84 MB. r=32: 84 M / 1.04% / 168 MB.** They come back in §6 (communication volume) and in Phase 16 (multi-adapter serving economics).
 
-Note also that **most of the LoRA capacity is in the MLP**: `gate + up + down` = 884 736 of the 1 310 720 per layer, or **67%**. This is the arithmetic behind the empirical finding that targeting all linear layers beats attention-only — most parameters, and most knowledge, live in the MLP.
+### Two different "MLP share" figures — do not confuse them
+
+Both are correct and they answer different questions. Mixing them up is easy, so pin them down:
+
+| Question | Computation, per layer of Llama-3.1-8B | MLP share |
+|---|---|---|
+| What fraction of the **base model's** parameters are in the MLP? | MLP `3 × 4096 × 14336` = 176.2 M, attention = 41.9 M, total 218.1 M | **81%** |
+| What fraction of the **LoRA adapter's** parameters land in the MLP (r=16)? | MLP `884 736`, attention `425 984`, total `1 310 720` | **67%** |
+
+**Why they differ, and it is not a rounding artefact.** Base parameters scale with `d_in × d_out` — a *product*. LoRA parameters scale with `r × (d_in + d_out)` — a *sum*. A wide matrix like `gate_proj` (4096 × 14336) is enormous in the base model but its LoRA adapter is only `16 × 18432`. **LoRA deliberately flattens the size differences between matrices**, which is exactly why a rank-16 adapter can be 0.52% of the model while still reaching every part of it.
+
+Either figure supports the same conclusion — **target all linear layers, not attention-only** — because most parameters *and* most adapter capacity sit in the MLP. Attention adapters tend to move style; MLP adapters move knowledge. Phase 06 ablates this.
 
 **Sanity check you can always run:** `model.print_trainable_parameters()`. If it says `0.00%`, your `target_modules` matched nothing and your loss will still descend (see Phase 12 failure #5).
 

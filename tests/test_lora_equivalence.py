@@ -90,8 +90,18 @@ def test_zero_init_is_identity(base_linear: nn.Linear) -> None:
 
 
 def test_forward_matches_peft(base_linear: nn.Linear) -> None:
-    """Given identical A and B, your implementation and peft's compute the same function."""
-    peft = pytest.importorskip("peft", reason="peft not installed")
+    """Given identical A and B, your implementation and peft's compute the same function.
+
+    This is Phase 01's actual deliverable -- the other tests in this file only check the
+    scaffolding. It must FAIL loudly if peft is missing, never skip.
+
+    It previously used pytest.importorskip, and when peft was absent from the Mac
+    requirements the run reported "3 passed, 1 skipped" -- which reads as success while
+    the one test that mattered had not executed. Same family as LESSONS.md L1 and L2: a
+    tool reporting something other than what happened. peft is a declared dependency now,
+    so its absence is a broken environment, not an optional extra.
+    """
+    import peft
     from peft.tuners.lora import LoraLayer  # noqa: F401  (kept for the reader's benefit)
 
     torch.manual_seed(2)
